@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>VMC Bore Clearance Generator</title>
+<style>
+:root{--bg:#f5f5f5;--card:#fff;--line:#e3e3e3;--ink:#161616;--mute:#7a7a7a}
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif}
+body{background:var(--bg);color:var(--ink);min-height:100vh;padding:20px;display:flex;justify-content:center;align-items:flex-start}
+.container{width:100%;max-width:520px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:24px;position:relative}
+h2{font-size:1.1rem;font-weight:600;margin-bottom:20px;letter-spacing:.2px}
+.form-group{margin-bottom:14px}
+label{display:block;font-size:.78rem;margin-bottom:5px;color:var(--mute)}
+input{width:100%;padding:11px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;font-size:1rem;color:var(--ink)}
+input:focus{outline:none;border-color:var(--ink)}
+.btn{width:100%;margin-top:10px;padding:13px;background:var(--ink);color:#fff;border:none;border-radius:8px;font-size:.95rem;font-weight:600;cursor:pointer}
+.btn:active{opacity:.85}
+#loading-overlay{display:none;position:absolute;inset:0;background:rgba(255,255,255,.95);border-radius:14px;flex-direction:column;justify-content:center;align-items:center;z-index:10}
+.spinner{width:34px;height:34px;border:3px solid var(--line);border-top-color:var(--ink);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:14px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-text{font-size:.9rem;color:var(--mute)}
+#output-section{display:none;margin-top:24px;padding-top:20px;border-top:1px solid var(--line)}
+.tabs{display:flex;gap:6px;margin-bottom:14px}
+.tab-btn{flex:1;padding:9px;background:none;border:1px solid var(--line);border-radius:8px;font-weight:600;font-size:.85rem;cursor:pointer;color:var(--mute)}
+.tab-btn.active{background:var(--ink);border-color:var(--ink);color:#fff}
+.code-box{position:relative;background:#fafafa;border:1px solid var(--line);border-radius:8px;padding:8px 0;font:.8rem 'Courier New',monospace;overflow:auto;max-height:380px}
+.ln{padding:1px 12px;white-space:pre}
+.ln.on{background:var(--ink);color:#fff}
+.ln.sub{color:#555}
+.tools{display:flex;gap:6px;margin-bottom:10px}
+button.sm{padding:8px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;color:var(--ink);font-weight:600;font-size:.8rem;cursor:pointer}
+button.sm.on,button.sm.main{background:var(--ink);border-color:var(--ink);color:#fff}
+canvas{display:block;width:100%;height:auto;background:#f7f7f7;border:1px solid var(--line);border-radius:8px;margin-bottom:8px}
+.dro{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:6px}
+.dro div{border:1px solid var(--line);border-radius:8px;padding:6px 9px;color:var(--mute);font-size:.62rem;text-transform:uppercase;letter-spacing:.4px}
+.dro b{display:block;color:var(--ink);font:600 1rem 'Courier New',monospace;text-transform:none;margin-top:1px;letter-spacing:0}
+.blk{border:1px solid var(--line);border-radius:8px;padding:7px 10px;font:.78rem 'Courier New',monospace;margin-bottom:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bar{height:4px;background:var(--line);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--ink)}
+.tm{display:flex;justify-content:space-between;color:var(--mute);font-size:.72rem;margin:5px 0 10px}
+.ctrl{display:flex;gap:6px}
+.ctrl button{flex:1}
+.ctrl .main{flex:2}
+.note{font-size:.75rem;color:var(--mute);margin-bottom:10px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>Bore Clearance (MM Stepover)</h2>
+
+  <form id="generator-form" onsubmit="startGeneration(event)">
+    <div class="form-group"><label>Bore Diameter (mm)</label><input type="number" id="boreDia" step="0.001" placeholder="e.g. 100" required></div>
+    <div class="form-group"><label>Cutter Diameter (mm)</label><input type="number" id="cutterDia" step="0.001" placeholder="e.g. 32" required></div>
+    <div class="form-group"><label>Stepover per Pass (mm)</label><input type="number" id="stepoverMm" step="0.001" placeholder="e.g. 10" required></div>
+    <div class="form-group"><label>Total Depth (mm)</label><input type="number" id="totalDepth" step="0.001" placeholder="e.g. 20" required></div>
+    <div class="form-group"><label>Depth of Cut per Pass (mm)</label><input type="number" id="depthOfCut" step="0.001" placeholder="e.g. 2" required></div>
+    <div class="form-group"><label>Feed Rate (mm/min)</label><input type="number" id="feedRate" step="1" placeholder="e.g. 500" required></div>
+    <button type="submit" class="btn">Generate Program</button>
+  </form>
+
+  <div id="loading-overlay"><div class="spinner"></div><div class="loading-text">Generating program & simulation...</div></div>
+
+  <div id="output-section">
+    <div class="tabs">
+      <button class="tab-btn active" id="tb-sim" onclick="switchTab('sim')">Simulation</button>
+      <button class="tab-btn" id="tb-code" onclick="switchTab('code')">G-Code</button>
+    </div>
+
+    <div id="tab-sim">
+      <canvas id="topCanvas" width="440" height="440"></canvas>
+      <canvas id="sideCanvas" width="440" height="230"></canvas>
+      <div class="dro">
+        <div>X<b id="dX">0.000</b></div><div>Y<b id="dY">0.000</b></div><div>Z<b id="dZ">0.000</b></div>
+        <div>Mode<b id="dMode">-</b></div><div>Feed<b id="dF">0</b></div><div>Spindle<b id="dS">0</b></div>
+        <div>Sub repeat<b id="dPass">-</b></div><div>Ring R<b id="dR">-</b></div><div>Removed<b id="dRem">0%</b></div>
+      </div>
+      <div class="blk" id="curBlock">-</div>
+      <div class="bar"><i id="prog"></i></div>
+      <div class="tm"><span id="tNow">00:00</span><span id="tPct">0%</span><span id="tTot">00:00</span></div>
+      <div class="ctrl">
+        <button class="sm main" id="btnPlay" onclick="togglePlay()">Pause</button>
+        <button class="sm" onclick="restartSim()">Restart</button>
+        <button class="sm" onclick="endSim()">End</button>
+      </div>
+      <div class="ctrl" style="margin-top:6px" id="speeds">
+        <button class="sm" data-s="1" onclick="setSpeed(this)">1x</button>
+        <button class="sm" data-s="10" onclick="setSpeed(this)">10x</button>
+        <button class="sm on" data-s="50" onclick="setSpeed(this)">50x</button>
+        <button class="sm" data-s="200" onclick="setSpeed(this)">200x</button>
+        <button class="sm" data-s="1000" onclick="setSpeed(this)">1000x</button>
+      </div>
+    </div>
+
+    <div id="tab-code" style="display:none">
+      <div class="note" id="progNote"></div>
+      <div class="tools"><button class="sm" onclick="copyCode()" id="btnCopy">Copy</button><button class="sm" onclick="downloadCode()">Download .nc</button></div>
+      <div class="code-box" id="programCode"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const RAPID = 12000, RPM = 2000;
+let S = null, raf = 0;
+
+function startGeneration(e) {
+  e.preventDefault();
+  const p = {
+    bore: +$('boreDia').value, cutter: +$('cutterDia').value, step: +$('stepoverMm').value,
+    depth: +$('totalDepth').value, doc: +$('depthOfCut').value, feed: +$('feedRate').value
+  };
+  if (Object.values(p).some(v => !(v > 0))) { alert("All values must be greater than 0!"); return; }
+  if (p.cutter >= p.bore) { alert("Cutter diameter must be smaller than Bore diameter!"); return; }
+  if (p.step >= p.cutter) { alert("Stepover (mm) should be smaller than Cutter diameter for proper overlap!"); return; }
+
+  cancelAnimationFrame(raf); S = null;
+  $('output-section').style.display = 'none';
+  const ov = $('loading-overlay'); ov.style.display = 'flex';
+  setTimeout(() => {
+    ov.style.display = 'none';
+    $('output-section').style.display = 'block';
+    switchTab('sim');
+    initSim(p);
+    $('output-section').scrollIntoView({ behavior: 'smooth' });
+  }, 5000);
+}
+
+/* ---------- Main + Sub program (M98 / M99), helical ramp-in on first circle ---------- */
+function build(p) {
+  const f3 = v => v.toFixed(3);
+  const N = Math.ceil(p.depth / p.doc - 1e-9);   // number of sub repeats
+  const doc = p.depth / N;                        // equal passes, so ONE sub program is enough
+  const maxR = p.bore / 2 - p.cutter / 2;
+  const radii = [];
+  for (let r = p.step; r < maxR - 1e-6; r += p.step) radii.push(r);
+  radii.push(maxR);
+
+  const head = [
+    'O0001 (BORE CLEARANCE - MAIN)', 'G21 G90 G40 G80', `T01 M06 (${p.cutter}MM END MILL)`,
+    `G54 G00 X0.0 Y0.0 S${RPM} M03`, 'G43 H01 Z50.0 M08', 'Z2.0', `G01 Z0.0 F${p.feed}`,
+    `M98 P${String(N).padStart(2, '0')}0002 (${N} X DOC ${f3(doc)})`
+  ];
+  const tail = ['G00 Z50.0 M09', 'G28 G91 Z0.0', 'M30'];
+
+  // sub entries: relative (G91) moves. type null = text only
+  const sub = [
+    { txt: 'O0002 (BORE CLEARANCE - SUB)' },
+    { txt: 'G91 (INCREMENTAL)' },
+    { txt: `G01 X${f3(radii[0])} Y0.0 F${p.feed}`, type: 'F', dx: radii[0] },
+    { txt: `G03 X0.0 Y0.0 Z-${f3(doc)} I-${f3(radii[0])} J0.0 (HELICAL DOWN)`, type: 'A', r: radii[0], dz: -doc },
+    { txt: `G03 X0.0 Y0.0 I-${f3(radii[0])} J0.0 (FLOOR)`, type: 'A', r: radii[0], dz: 0 }
+  ];
+  for (let k = 1; k < radii.length; k++) {
+    sub.push({ txt: `G01 X${f3(radii[k] - radii[k - 1])} Y0.0`, type: 'F', dx: radii[k] - radii[k - 1] });
+    sub.push({ txt: `G03 X0.0 Y0.0 I-${f3(radii[k])} J0.0`, type: 'A', r: radii[k], dz: 0 });
+  }
+  sub.push({ txt: `G01 X-${f3(maxR)} Y0.0 (CENTER)`, type: 'F', dx: -maxR });
+  sub.push({ txt: 'G90' }, { txt: 'M99' });
+
+  const L = head.concat(tail, [''], sub.map(e => e.txt));
+  const subBase = head.length + tail.length + 1;
+
+  // executed motion list
+  const M = []; let cur = { x: 0, y: 0, z: 100 }, pass = 0;
+  const mv = (line, type, to, r) => {
+    const from = { ...cur }, t = { ...cur, ...to };
+    const len = type === 'A' ? Math.hypot(2 * Math.PI * r, t.z - from.z) : Math.hypot(t.x - from.x, t.y - from.y, t.z - from.z);
+    M.push({ type, from, to: t, len, r, line, pass, feed: type === 'R' ? RAPID : p.feed });
+    cur = t;
+  };
+  mv(4, 'R', { z: 50 }); mv(5, 'R', { z: 2 }); mv(6, 'F', { z: 0 });
+  for (pass = 1; pass <= N; pass++) {
+    sub.forEach((e, j) => {
+      if (!e.type) return;
+      if (e.type === 'F') mv(subBase + j, 'F', { x: cur.x + e.dx });
+      else mv(subBase + j, 'A', { z: cur.z + e.dz }, e.r);
+    });
+  }
+  pass = 0;
+  mv(head.length, 'R', { z: 50 }); mv(head.length + 1, 'R', { z: 100 });
+  return { lines: L, moves: M, radii, maxR, passes: N, doc, subBase, m98: head.length - 1 };
+}
+
+/* ---------- Simulation ---------- */
+function initSim(p) {
+  const B = build(p);
+  let t = 0;
+  B.moves.forEach(s => { s.t0 = t; t += s.len / s.feed * 60; s.t1 = t; });
+  const half = p.bore / 2 + Math.max(10, p.bore * 0.12);
+  S = { ...B, p, half, total: t, speed: +document.querySelector('#speeds .on').dataset.s,
+        sc: 440 / (2 * half), NC: 300, prof: new Float32Array(300), spin: 0, last: 0,
+        stock: document.createElement('canvas') };
+  S.stock.width = S.stock.height = 440;
+  S.sctx = S.stock.getContext('2d');
+
+  const box = $('programCode'); box.innerHTML = '';
+  S.els = B.lines.map((txt, i) => {
+    const d = document.createElement('div'); d.className = 'ln' + (i > B.subBase ? ' sub' : '');
+    d.textContent = txt || ' '; box.appendChild(d); return d;
+  });
+  $('progNote').textContent = `Sub repeats: ${B.passes} x ${B.doc.toFixed(3)} mm (equal passes, total ${p.depth} mm)`;
+  $('tTot').textContent = fmt(t);
+  resetSim();
+  raf = requestAnimationFrame(frame);
+}
+
+function resetSim() {
+  S.simT = 0; S.ptr = 0; S.frac = 0; S.playing = true; S.lastLine = -1; S.prof.fill(0);
+  S.sctx.fillStyle = '#d6d6d6'; S.sctx.fillRect(0, 0, 440, 440);
+  $('btnPlay').textContent = 'Pause';
+}
+
+const lerp = (a, b, f) => a + (b - a) * f;
+function pos(s, f) {
+  if (s.type === 'A') { const a = 2 * Math.PI * f; return { x: s.r * Math.cos(a), y: s.r * Math.sin(a), z: lerp(s.from.z, s.to.z, f) }; }
+  return { x: lerp(s.from.x, s.to.x, f), y: lerp(s.from.y, s.to.y, f), z: lerp(s.from.z, s.to.z, f) };
+}
+
+function cut(x, y, z) {
+  const { p, sc, half, NC } = S, cr = p.cutter / 2, d = -z;
+  const c = S.sctx;
+  c.fillStyle = `hsl(0,0%,${82 - 50 * Math.min(1, d / p.depth)}%)`;
+  c.beginPath(); c.arc(220 + x * sc, 220 - y * sc, cr * sc, 0, 7); c.fill();
+  const w = 2 * half / NC;
+  for (let i = Math.max(0, Math.floor((x - cr + half) / w)); i <= Math.min(NC - 1, Math.ceil((x + cr + half) / w)); i++) {
+    const dx = -half + (i + .5) * w - x;
+    if (dx * dx + y * y <= cr * cr && d > S.prof[i]) S.prof[i] = d;
+  }
+}
+
+function applySeg(s, f0, f1) {
+  if (s.type === 'R' || f1 <= f0) return;
+  const step = Math.max(S.p.cutter / 8, .05);
+  const n = Math.max(1, Math.ceil(s.len * (f1 - f0) / step));
+  for (let k = 1; k <= n; k++) { const q = pos(s, lerp(f0, f1, k / n)); if (q.z < 0) cut(q.x, q.y, q.z); }
+}
+
+function advance(t) {
+  const M = S.moves;
+  while (S.ptr < M.length && M[S.ptr].t1 <= t) { applySeg(M[S.ptr], S.frac, 1); S.ptr++; S.frac = 0; }
+  if (S.ptr < M.length) {
+    const m = M[S.ptr], f = m.t1 > m.t0 ? (t - m.t0) / (m.t1 - m.t0) : 1;
+    applySeg(m, S.frac, f); S.frac = f;
+  }
+}
+
+function frame(ts) {
+  if (!S) return;
+  const dt = S.last ? Math.min((ts - S.last) / 1000, .1) : 0; S.last = ts;
+  if (S.playing) {
+    S.simT = Math.min(S.total, S.simT + dt * S.speed);
+    advance(S.simT);
+    S.spin += dt * 14;
+    if (S.simT >= S.total) { S.playing = false; $('btnPlay').textContent = 'Replay'; }
+  }
+  render();
+  raf = requestAnimationFrame(frame);
+}
+
+function render() {
+  const { p, sc, half, moves, ptr } = S;
+  const done = ptr >= moves.length;
+  const m = done ? moves[moves.length - 1] : moves[ptr];
+  const q = done ? m.to : pos(m, S.frac);
+  const cr = p.cutter / 2, R = p.bore / 2;
+  const cutting = q.z < 0 && m.type !== 'R' && !done;
+
+  /* top view */
+  const c = $('topCanvas').getContext('2d');
+  c.drawImage(S.stock, 0, 0);
+  c.lineWidth = 1.5; c.strokeStyle = '#161616';
+  c.beginPath(); c.arc(220, 220, R * sc, 0, 7); c.stroke();
+  c.lineWidth = 1; c.strokeStyle = 'rgba(0,0,0,.25)'; c.setLineDash([4, 4]);
+  c.beginPath(); S.radii.forEach(r => { c.moveTo(220 + r * sc, 220); c.arc(220, 220, r * sc, 0, 7); }); c.stroke();
+  c.setLineDash([]);
+  const tx = 220 + q.x * sc, ty = 220 - q.y * sc;
+  c.fillStyle = cutting ? 'rgba(0,0,0,.22)' : 'rgba(0,0,0,.07)'; c.strokeStyle = '#161616'; c.lineWidth = 1.5;
+  c.beginPath(); c.arc(tx, ty, cr * sc, 0, 7); c.fill(); c.stroke();
+  c.lineWidth = 1; c.beginPath();
+  for (let k = 0; k < 4; k++) { const a = S.spin + k * Math.PI / 2; c.moveTo(tx, ty); c.lineTo(tx + Math.cos(a) * cr * sc, ty + Math.sin(a) * cr * sc); }
+  c.stroke();
+  c.fillStyle = '#7a7a7a'; c.font = '12px sans-serif'; c.fillText('TOP   \u00D8' + p.bore, 10, 20);
+
+  /* side section view */
+  const g = $('sideCanvas').getContext('2d'), W = 440, H = 230;
+  const T = p.depth + Math.max(6, p.depth * .5), y0 = 75, sz = (H - y0 - 10) / T, sx = W / (2 * half);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = '#d6d6d6'; g.fillRect(0, y0, W, T * sz);
+  g.fillStyle = '#f7f7f7'; const w = W / S.NC;
+  for (let i = 0; i < S.NC; i++) if (S.prof[i] > 0) g.fillRect(i * w, y0, w + .6, S.prof[i] * sz);
+  g.strokeStyle = '#161616'; g.setLineDash([5, 4]); g.lineWidth = 1;
+  g.beginPath(); g.moveTo(0, y0 + p.depth * sz); g.lineTo(W, y0 + p.depth * sz); g.stroke(); g.setLineDash([]);
+  const px = W / 2 + q.x * sx, tip = q.z > 0 ? y0 - Math.min(q.z, 50) / 50 * 55 : y0 - q.z * sz, cw = p.cutter * sx;
+  g.fillStyle = '#9a9a9a'; g.fillRect(px - cw * .3, tip - 70, cw * .6, 50);
+  g.fillStyle = '#161616'; g.fillRect(px - cw / 2, tip - 22, cw, 22);
+  g.fillStyle = '#7a7a7a'; g.font = '12px sans-serif';
+  g.fillText('SECTION (Z exaggerated)', 10, 20); g.fillText('Z-' + p.depth, W - 60, y0 + p.depth * sz - 4);
+
+  /* readouts */
+  $('dX').textContent = q.x.toFixed(3); $('dY').textContent = q.y.toFixed(3); $('dZ').textContent = q.z.toFixed(3);
+  $('dMode').textContent = done ? 'DONE' : m.type === 'R' ? 'RAPID' : m.type === 'A' ? (m.to.z < m.from.z ? 'HELIX' : 'G03 ARC') : 'G01';
+  $('dF').textContent = done || m.type === 'R' ? 'G00' : p.feed;
+  $('dS').textContent = done ? 0 : RPM;
+  $('dPass').textContent = m.pass ? m.pass + '/' + S.passes : '-';
+  $('dR').textContent = m.type === 'A' ? m.r.toFixed(2) : '-';
+  let rem = 0; for (let i = 0; i < S.NC; i++) rem += S.prof[i];
+  $('dRem').textContent = Math.min(100, Math.round(rem / ((R / half) * S.NC * p.depth) * 100)) + '%';
+  const pct = Math.round(S.simT / S.total * 100);
+  $('prog').style.width = pct + '%';
+  $('tNow').textContent = fmt(S.simT); $('tPct').textContent = pct + '%';
+
+  if (m.line !== S.lastLine) {
+    if (S.lastLine >= 0) S.els[S.lastLine].classList.remove('on');
+    S.els[m.line].classList.add('on'); S.lastLine = m.line;
+    $('curBlock').textContent = S.lines[m.line];
+    const box = $('programCode');
+    if ($('tab-code').style.display !== 'none') box.scrollTop = S.els[m.line].offsetTop - box.clientHeight / 2;
+  }
+}
+
+const fmt = s => { s = Math.round(s); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+
+/* ---------- Controls ---------- */
+function togglePlay() {
+  if (!S) return;
+  if (S.simT >= S.total) { resetSim(); return; }
+  S.playing = !S.playing; $('btnPlay').textContent = S.playing ? 'Pause' : 'Play';
+}
+function restartSim() { if (S) resetSim(); }
+function endSim() { if (!S) return; S.simT = S.total; advance(S.total); S.playing = false; $('btnPlay').textContent = 'Replay'; }
+function setSpeed(btn) {
+  document.querySelectorAll('#speeds button').forEach(b => b.classList.remove('on'));
+  btn.classList.add('on'); if (S) S.speed = +btn.dataset.s;
+}
+function switchTab(name) {
+  ['sim', 'code'].forEach(n => {
+    $('tab-' + n).style.display = n === name ? 'block' : 'none';
+    $('tb-' + n).classList.toggle('active', n === name);
+  });
+}
+function copyCode() {
+  if (!S) return;
+  navigator.clipboard.writeText(S.lines.join('\n')).then(() => {
+    $('btnCopy').textContent = 'Copied'; setTimeout(() => $('btnCopy').textContent = 'Copy', 1500);
+  }).catch(() => alert('Copy failed'));
+}
+function downloadCode() {
+  if (!S) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([S.lines.join('\n')], { type: 'text/plain' }));
+  a.download = 'bore_clearance.nc'; a.click();
+}
+</script>
+</body>
+</html>
